@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
                     tts.setLanguage(Locale.US);
                 }
                 if (pendingSpeech != null) {
-                    tts.speak(pendingSpeech, TextToSpeech.QUEUE_FLUSH, null, "trueview_tts");
+                    tts.speak(pendingSpeech, TextToSpeech.QUEUE_ADD, null, "trueview_tts");
                     pendingSpeech = null;
                 }
             }
@@ -77,10 +77,8 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface
             public void speak(String text) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                        "Voice: " + text, Toast.LENGTH_SHORT).show());
                 if (ttsReady && tts != null) {
-                    tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "trueview_tts");
+                    tts.speak(text, TextToSpeech.QUEUE_ADD, null, "trueview_tts");
                 } else {
                     pendingSpeech = text;
                 }
