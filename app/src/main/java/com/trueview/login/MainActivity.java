@@ -13,8 +13,10 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Message;
 import android.provider.MediaStore;
+import android.speech.tts.TextToSpeech;
 import android.view.ViewGroup;
 import android.webkit.GeolocationPermissions;
+import android.webkit.JavascriptInterface;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -45,6 +47,8 @@ public class MainActivity extends Activity {
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
     private String cameraPhotoPath;
+    private TextToSpeech tts;
+    private boolean ttsReady = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -55,6 +59,24 @@ public class MainActivity extends Activity {
         webView.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(webView);
+
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                ttsReady = true;
+                int result = tts.setLanguage(new Locale("en", "IN"));
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts.setLanguage(Locale.US);
+                }
+            }
+        });
+        webView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void speak(String text) {
+                if (ttsReady && tts != null) {
+                    tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "trueview_tts");
+                }
+            }
+        }, "AndroidTTS");
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -78,6 +100,23 @@ public class MainActivity extends Activity {
                     openExternal(url);
                 }
                 return true;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                // Route the website's speechSynthesis.speak() calls to our native
+                // Android TextToSpeech engine, since many phones' built-in WebView
+                // does not actually voice speechSynthesis even though the API exists.
+                String shim =
+                        "(function(){" +
+                        "  if (window.speechSynthesis && window.AndroidTTS) {" +
+                        "    window.speechSynthesis.speak = function(utterance) {" +
+                        "      try { window.AndroidTTS.speak(utterance.text); } catch (e) {}" +
+                        "    };" +
+                        "  }" +
+                        "})();";
+                view.evaluateJavascript(shim, null);
             }
         });
 
@@ -305,6 +344,15 @@ public class MainActivity extends Activity {
             // so GPS / camera requests from the page don't race the OS permission prompt
             webView.loadUrl(SITE_URL);
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
+        super.onDestroy();
     }
 
     @Override
