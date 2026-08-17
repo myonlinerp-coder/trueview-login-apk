@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
     private String cameraPhotoPath;
     private TextToSpeech tts;
     private boolean ttsReady = false;
+    private String pendingSpeech;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -67,13 +68,21 @@ public class MainActivity extends Activity {
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     tts.setLanguage(Locale.US);
                 }
+                if (pendingSpeech != null) {
+                    tts.speak(pendingSpeech, TextToSpeech.QUEUE_FLUSH, null, "trueview_tts");
+                    pendingSpeech = null;
+                }
             }
         });
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface
             public void speak(String text) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                        "Voice: " + text, Toast.LENGTH_SHORT).show());
                 if (ttsReady && tts != null) {
                     tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "trueview_tts");
+                } else {
+                    pendingSpeech = text;
                 }
             }
         }, "AndroidTTS");
@@ -105,16 +114,24 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                // Route the website's speechSynthesis.speak() calls to our native
-                // Android TextToSpeech engine, since many phones' built-in WebView
-                // does not actually voice speechSynthesis even though the API exists.
+                // Force-define speechSynthesis / SpeechSynthesisUtterance so the
+                // website's speak() calls always route to our native Android TTS -
+                // some phones' WebView doesn't implement the Web Speech API at all,
+                // so simply overriding an existing speak() isn't enough.
                 String shim =
                         "(function(){" +
-                        "  if (window.speechSynthesis && window.AndroidTTS) {" +
-                        "    window.speechSynthesis.speak = function(utterance) {" +
-                        "      try { window.AndroidTTS.speak(utterance.text); } catch (e) {}" +
-                        "    };" +
-                        "  }" +
+                        "  window.SpeechSynthesisUtterance = function(text){" +
+                        "    this.text = text; this.lang=''; this.rate=1; this.pitch=1; this.volume=1;" +
+                        "  };" +
+                        "  window.speechSynthesis = window.speechSynthesis || {};" +
+                        "  window.speechSynthesis.speak = function(utterance){" +
+                        "    try {" +
+                        "      var t = (utterance && utterance.text) ? utterance.text : String(utterance);" +
+                        "      if (window.AndroidTTS) { window.AndroidTTS.speak(t); }" +
+                        "    } catch (e) {}" +
+                        "  };" +
+                        "  window.speechSynthesis.cancel = window.speechSynthesis.cancel || function(){};" +
+                        "  window.speechSynthesis.getVoices = window.speechSynthesis.getVoices || function(){ return []; };" +
                         "})();";
                 view.evaluateJavascript(shim, null);
             }
