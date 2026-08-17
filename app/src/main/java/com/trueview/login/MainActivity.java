@@ -217,6 +217,27 @@ public class MainActivity extends Activity {
                 return true;
             }
 
+            // Custom prompt dialog (text input) - no website URL shown, just "Input"
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message, String defaultValue,
+                    final android.webkit.JsPromptResult result) {
+                final android.widget.EditText input = new android.widget.EditText(MainActivity.this);
+                if (defaultValue != null) {
+                    input.setText(defaultValue);
+                }
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("Input")
+                        .setMessage(message)
+                        .setView(input)
+                        .setPositiveButton("OK", (dialog, which) ->
+                                result.confirm(input.getText().toString()))
+                        .setNegativeButton("Cancel", (dialog, which) -> result.cancel())
+                        .setOnCancelListener((DialogInterface dialog) -> result.cancel())
+                        .setCancelable(false)
+                        .show();
+                return true;
+            }
+
             // Camera / file upload trigger from the website (<input type=file capture>)
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCb,
