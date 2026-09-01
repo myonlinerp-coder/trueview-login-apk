@@ -4,21 +4,27 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.content.ActivityNotFoundException;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Message;
 import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
+import android.util.Base64;
 import android.view.ViewGroup;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
+import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -32,7 +38,9 @@ import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -289,7 +297,97 @@ public class MainActivity extends Activity {
             }
         });
 
+        // Without this, WebView has NO built-in download support at all - any
+        // <a download> click (blob: or data: URI) or Content-Disposition:
+        // attachment response is silently dropped with no callback and no
+        // error. This is exactly why the Client Portal's "Save / Share PDF"
+        // button did nothing: there was nowhere for that download to go.
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> {
+            String fileName = URLUtil.guessFileName(url, contentDisposition, mimetype);
+            if (url != null && url.startsWith("data:")) {
+                // jsPDF-style in-page files (e.g. the Client Portal's PDF
+                // report) arrive as a data: URI, not a real network request -
+                // DownloadManager only accepts http/https, so decode the
+                // base64 payload ourselves and write it straight into
+                // Downloads.
+                new Thread(() -> {
+                    try {
+                        saveDataUriToDownloads(url, mimetype, fileName);
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                                "Saved to Downloads: " + fileName, Toast.LENGTH_LONG).show());
+                    } catch (Exception e) {
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                                "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                    }
+                }).start();
+            } else if (url != null) {
+                // Normal http(s) attachment - hand off to Android's own
+                // Download Manager (handles the notification, retry, etc.).
+                try {
+                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                    request.addRequestHeader("User-Agent", userAgent);
+                    request.setMimeType(mimetype);
+                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                    DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                    if (dm != null) {
+                        dm.enqueue(request);
+                        Toast.makeText(MainActivity.this, "Downloading " + fileName, Toast.LENGTH_SHORT).show();
+                    }
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+
         requestNeededPermissions();
+    }
+
+    // Decodes a "data:<mime>;base64,<data>" URI (what jsPDF's pdf.output
+    // ('datauristring') produces) and writes the bytes straight into the
+    // device's Downloads folder. Runs on a background thread (called from
+    // setDownloadListener above) since Base64-decoding + writing a multi-MB
+    // PDF shouldn't happen on the UI thread.
+    private void saveDataUriToDownloads(String dataUri, String mimeType, String fileName) throws IOException {
+        int commaIndex = dataUri.indexOf(',');
+        if (commaIndex < 0) {
+            throw new IOException("Malformed data URI");
+        }
+        byte[] bytes = Base64.decode(dataUri.substring(commaIndex + 1), Base64.DEFAULT);
+        if (mimeType == null || mimeType.isEmpty()) {
+            mimeType = "application/octet-stream";
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Scoped storage (Android 10+): write via MediaStore's public
+            // Downloads collection - this is the only supported way to
+            // place a file directly in Downloads on modern Android.
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+            ContentResolver resolver = getContentResolver();
+            Uri itemUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (itemUri == null) {
+                throw new IOException("Could not create file in Downloads");
+            }
+            try (OutputStream out = resolver.openOutputStream(itemUri)) {
+                if (out == null) {
+                    throw new IOException("Could not open output stream");
+                }
+                out.write(bytes);
+            }
+        } else {
+            // Pre-scoped-storage devices: WRITE_EXTERNAL_STORAGE (already
+            // requested up to SDK 28 in the manifest) lets us write directly.
+            File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (!downloadsDir.exists()) {
+                downloadsDir.mkdirs();
+            }
+            try (FileOutputStream out = new FileOutputStream(new File(downloadsDir, fileName))) {
+                out.write(bytes);
+            }
+        }
     }
 
     private void openExternal(String url) {
