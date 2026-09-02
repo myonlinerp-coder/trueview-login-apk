@@ -93,6 +93,28 @@ public class MainActivity extends Activity {
             }
         }, "AndroidTTS");
 
+        // Lets the web page hand over a base64 file + its EXACT desired
+        // filename directly, instead of relying on setDownloadListener's
+        // Content-Disposition guessing (which isn't reliable for data: URI
+        // downloads - that's what produced a garbled base64-looking
+        // filename for the Client Portal's PDF before this was added).
+        webView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void saveBase64File(String base64Data, String fileName, String mimeType) {
+                new Thread(() -> {
+                    try {
+                        byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+                        writeBytesToDownloads(bytes, fileName, mimeType);
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                                "Saved to Downloads: " + fileName, Toast.LENGTH_LONG).show());
+                    } catch (Exception e) {
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                                "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                    }
+                }).start();
+            }
+        }, "AndroidDownloader");
+
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -354,6 +376,13 @@ public class MainActivity extends Activity {
             throw new IOException("Malformed data URI");
         }
         byte[] bytes = Base64.decode(dataUri.substring(commaIndex + 1), Base64.DEFAULT);
+        writeBytesToDownloads(bytes, fileName, mimeType);
+    }
+
+    // Shared by saveDataUriToDownloads() above (data: URI downloads caught
+    // by setDownloadListener) and AndroidDownloader.saveBase64File() (the
+    // direct JS bridge, which passes the exact filename with no guessing).
+    private void writeBytesToDownloads(byte[] bytes, String fileName, String mimeType) throws IOException {
         if (mimeType == null || mimeType.isEmpty()) {
             mimeType = "application/octet-stream";
         }
