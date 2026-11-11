@@ -17,6 +17,8 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Message;
 import android.provider.MediaStore;
+import android.provider.Settings;
+import android.os.PowerManager;
 import android.speech.tts.TextToSpeech;
 import android.util.Base64;
 import android.view.ViewGroup;
@@ -114,6 +116,64 @@ public class MainActivity extends Activity {
                 }).start();
             }
         }, "AndroidDownloader");
+
+        // Background trip tracking bridge. The web page (agent.html) calls
+        // AndroidTracker.start() when a trip begins; a foreground service then
+        // keeps recording GPS even with the screen locked, buffering the points
+        // on the phone. The page calls drain() whenever it is awake and uploads
+        // them to Firestore with their original timestamps.
+        webView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public String start() {
+                if (ContextCompat.checkSelfPermission(MainActivity.this,
+                        Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    return "no_permission";
+                }
+                try {
+                    Intent i = new Intent(MainActivity.this, TrackingService.class);
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        MainActivity.this.startForegroundService(i);
+                    } else {
+                        MainActivity.this.startService(i);
+                    }
+                    return "ok";
+                } catch (Exception e) {
+                    return "error:" + e.getMessage();
+                }
+            }
+
+            @JavascriptInterface
+            public void stop() {
+                MainActivity.this.stopService(new Intent(MainActivity.this, TrackingService.class));
+            }
+
+            @JavascriptInterface
+            public String drain() {
+                return TrackStore.drain(MainActivity.this);
+            }
+
+            @JavascriptInterface
+            public boolean isRunning() {
+                return TrackingService.running;
+            }
+
+            @JavascriptInterface
+            public boolean isBatteryOptimizationIgnored() {
+                if (Build.VERSION.SDK_INT < 23) return true;
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+            }
+
+            @JavascriptInterface
+            public void openBatterySettings() {
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                    } catch (Exception ignored) {
+                    }
+                });
+            }
+        }, "AndroidTracker");
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -467,13 +527,16 @@ public class MainActivity extends Activity {
     }
 
     private void requestNeededPermissions() {
-        String[] permissions = {
+        java.util.List<String> permList = new java.util.ArrayList<>(java.util.Arrays.asList(
                 Manifest.permission.CAMERA,
                 Manifest.permission.RECORD_AUDIO,
                 Manifest.permission.VIBRATE,
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-        };
+                Manifest.permission.ACCESS_COARSE_LOCATION));
+        if (Build.VERSION.SDK_INT >= 33) {
+            permList.add(Manifest.permission.POST_NOTIFICATIONS); // shows the "Trip Tracking Active" notification
+        }
+        String[] permissions = permList.toArray(new String[0]);
 
         boolean needsRequest = false;
         for (String permission : permissions) {
@@ -495,8 +558,9 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            for (int result : grantResults) {
-                if (result != PackageManager.PERMISSION_GRANTED) {
+            for (int i = 0; i < grantResults.length; i++) {
+                if (grantResults[i] != PackageManager.PERMISSION_GRANTED
+                        && !"android.permission.POST_NOTIFICATIONS".equals(permissions[i])) {
                     Toast.makeText(this,
                             "Camera / Location permission venum, app properly work aaga",
                             Toast.LENGTH_LONG).show();
