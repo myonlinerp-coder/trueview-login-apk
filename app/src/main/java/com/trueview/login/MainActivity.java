@@ -551,6 +551,7 @@ public class MainActivity extends Activity {
         } else {
             // Already granted from a previous run - load the site right away
             webView.loadUrl(SITE_URL);
+            requestBatteryExemptionOnce();
         }
     }
 
@@ -570,6 +571,25 @@ public class MainActivity extends Activity {
             // Load the site only after the permission dialog is fully answered,
             // so GPS / camera requests from the page don't race the OS permission prompt
             webView.loadUrl(SITE_URL);
+            requestBatteryExemptionOnce();
+        }
+    }
+
+    // Android cannot grant "ignore battery optimisation" silently. The closest thing is this
+    // single system dialog ("Allow TrueView to always run in the background?") - the agent taps
+    // Allow once, on first launch only. No page prompt, no Settings hunting.
+    private void requestBatteryExemptionOnce() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+            android.content.SharedPreferences sp = getSharedPreferences("tv_prefs", MODE_PRIVATE);
+            if (sp.getBoolean("battery_asked", false)) return;
+            sp.edit().putBoolean("battery_asked", true).apply();
+            Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            i.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+        } catch (Exception ignored) {
         }
     }
 
