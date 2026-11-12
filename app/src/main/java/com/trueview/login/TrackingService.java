@@ -29,7 +29,7 @@ import androidx.core.content.ContextCompat;
  */
 public class TrackingService extends Service implements LocationListener {
 
-    static final String CHANNEL_ID = "tv_trip_tracking";
+    static final String CHANNEL_ID = "tv_trip_tracking_min"; // new id so the quiet importance applies on phones that already have the old channel
     static final int NOTIF_ID = 1001;
     static volatile boolean running = false;
 
@@ -117,10 +117,16 @@ public class TrackingService extends Service implements LocationListener {
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
+            // IMPORTANCE_MIN = no status-bar icon, no sound; the entry only sits at the
+            // bottom of the notification shade. (Android always requires some notification
+            // for a foreground service - this is the quietest it can be.)
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID, "Trip Tracking", NotificationManager.IMPORTANCE_LOW);
+                    CHANNEL_ID, "Trip Tracking (silent)", NotificationManager.IMPORTANCE_MIN);
+            channel.setShowBadge(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
             NotificationManager nm = getSystemService(NotificationManager.class);
             if (nm != null) {
+                nm.deleteNotificationChannel("tv_trip_tracking"); // old, louder channel from earlier builds
                 nm.createNotificationChannel(channel);
             }
         }
@@ -137,7 +143,10 @@ public class TrackingService extends Service implements LocationListener {
                 .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                 .setOngoing(true)
                 .setContentIntent(pi)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setShowWhen(false)
+                .setOnlyAlertOnce(true)
+                .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                .setPriority(NotificationCompat.PRIORITY_MIN)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .build();
     }
