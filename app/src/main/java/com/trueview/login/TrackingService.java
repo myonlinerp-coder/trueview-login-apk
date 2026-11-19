@@ -32,6 +32,9 @@ public class TrackingService extends Service implements LocationListener {
     static final String CHANNEL_ID = "tv_trip_tracking_min"; // new id so the quiet importance applies on phones that already have the old channel
     static final int NOTIF_ID = 1001;
     static volatile boolean running = false;
+    // true while the app is on screen (set by MainActivity). While it is on screen the web page publishes
+    // the live location itself; when it goes to the background / screen locks, this service uploads it.
+    static volatile boolean appVisible = true;
 
     private LocationManager locationManager;
     private PowerManager.WakeLock wakeLock;
@@ -92,6 +95,10 @@ public class TrackingService extends Service implements LocationListener {
     public void onLocationChanged(Location location) {
         if (location != null) {
             TrackStore.add(getApplicationContext(), location);
+            // Screen locked / app minimised: the page is asleep, so send the live location from here.
+            if (!appVisible) {
+                LiveUploader.maybeUpload(getApplicationContext(), location);
+            }
         }
     }
 
