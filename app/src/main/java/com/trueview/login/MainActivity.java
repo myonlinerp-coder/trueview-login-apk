@@ -145,6 +145,18 @@ public class MainActivity extends Activity {
             @JavascriptInterface
             public void stop() {
                 MainActivity.this.stopService(new Intent(MainActivity.this, TrackingService.class));
+                LiveUploader.clear(MainActivity.this);
+            }
+
+            // Lets the service send the live location to Firestore while the screen is locked.
+            @JavascriptInterface
+            public void configureLive(String projectId, String apiKey, String tripId, String refreshToken) {
+                LiveUploader.configure(MainActivity.this, projectId, apiKey, tripId, refreshToken);
+            }
+
+            @JavascriptInterface
+            public void clearLive() {
+                LiveUploader.clear(MainActivity.this);
             }
 
             @JavascriptInterface
@@ -591,6 +603,18 @@ public class MainActivity extends Activity {
             startActivity(i);
         } catch (Exception ignored) {
         }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        TrackingService.appVisible = true;
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        TrackingService.appVisible = false;   // screen locked / app minimised -> the service uploads live location
     }
 
     @Override
